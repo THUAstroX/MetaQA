@@ -4,6 +4,42 @@
 
 ---
 
+## Architecture
+
+```
+NuScenes (~12Hz)           ScenarioNet (10Hz)         NuScenes-QA (2Hz)
+  ┌──────────┐             ┌────────────────┐           ┌──────────┐
+  │ samples/ │             │ .pkl scenario  │           │ QA JSON  │
+  │ sweeps/  │             │ trajectories   │           │ per      │
+  │ camera   │             │ (ego + traffic)│           │ sample   │
+  └────┬─────┘             └──────┬─────────┘           └────┬─────┘
+       │                          │                          │
+       ▼                          ▼                          ▼
+  NuScenesOriginal         TrajectoryInter-          NuScenesQA-Loader
+  Processor                polator (~12Hz)                   │
+       │                          │                          │
+       └───────────────┬──────────┘                          │
+                       ▼                                     │
+                    ReplayOriginalEnv  ◄─────────────────────┘
+                     (synchronized)
+                            │
+                            │
+                            ▼
+        collect_data (collect offline RL data) 
+        replay_demo & scenario_demo
+```
+
+**Data Flow:**
+- **NuScenes Original Processor**: Extracts all frames (samples + sweeps) at ~12Hz with timestamps
+- **Trajectory Interpolator**: Interpolates ScenarioNet 10Hz trajectories to match ~12Hz timestamps
+- **QA Loader**: Maps NuScenes-QA annotations to sample tokens
+- **ReplayOriginalEnv**: Synchronizes all three data sources for frame-by-frame replay
+- **collect_data.py**: Collects offline RL datasets (observations, actions, rewards, costs, QA)
+- **replay_demo.py**: Generates GIFs with MetaDrive BEV + 6-camera grid + QA panel
+- **scenario_demo.py**: Real-time visualization with trajectory + surrounding vehicles
+
+---
+
 ## Demo
 
 <p align="center">
@@ -34,7 +70,8 @@ dataset/
 └── Scenario_Data/
     ├── exp_nuscenes/
     │   └── v1.0-mini/            # Original NuScenes dataset
-    │       ├── samples/          # Keyframe images
+    │       ├── samples/          # Keyframe images (2Hz)
+    │       ├── sweeps/           # Inter-keyframe images (~12Hz)
     │       ├── v1.0-mini/        # Metadata JSONs
     │       └── ...
     └── exp_nuscenes_converted/   # ScenarioNet converted scenarios
@@ -50,248 +87,194 @@ dataset/
 ```
 MetaQA/
 ├── meta_qa/
-│   ├── core/                    # Core components
-│   │   ├── config.py           # Configuration parameters
-│   │   ├── env.py              # TrajectoryEnv (trajectory-based action space)
-│   │   ├── action_space.py     # Trajectory action space definition
-│   │   └── trajectory_tracker.py
+│   ├── core/                       # Core RL components
+│   │   ├── config.py              # Configuration constants (PID gains, colors, etc.)
+│   │   ├── env.py                 # TrajectoryEnv (trajectory action → control)
+│   │   ├── action_space.py        # Trajectory action space definition
+│   │   └── trajectory_tracker.py  # PID-based trajectory tracking controller
 │   │
-│   ├── tools/                   # Utility modules
-│   │   ├── qa_loader.py        # NuScenes-QA data loader & matcher
-│   │   ├── qa_vis.py           # QA visualization (PIL/Pygame)
-│   │   ├── gif_generator.py    # GIF generator with 6-camera layout
-│   │   ├── trajectory_vis.py   # Trajectory visualization
-│   │   └── surrounding.py      # Surrounding vehicle extraction
+│   ├── cost/                       # Cost functions for Safe RL (CMDP)
+│   │   ├── base.py                # Abstract base cost function
+│   │   ├── collision.py           # Binary collision cost
+│   │   ├── ttc.py                 # Time-to-Collision cost
+│   │   └── kinematic.py           # Kinematic stability cost
 │   │
-│   ├── data/                    # Data I/O
-│   │   ├── structures.py       # MDP/CMDP data classes
-│   │   └── io.py               # HDF5/NPZ save/load utilities
+│   ├── tools/                      # Data processing, visualization & utilities
+│   │   ├── structures.py          # MDP/CMDP data classes
+│   │   ├── qa_loader.py           # NuScenes-QA data loader & scene matcher
+│   │   ├── nuscenes_original.py   # Original frequency (~12Hz) frame extraction
+│   │   ├── interpolation.py       # Trajectory interpolation (10Hz → ~12Hz)
+│   │   ├── replay_original.py     # Original frequency replay environment
+│   │   ├── trajectory_vis.py      # Trajectory visualization (OpenCV/Matplotlib)
+│   │   └── surrounding.py         # Surrounding vehicle extraction from MetaDrive
 │   │
-│   ├── cost/                    # Cost functions for Safe RL
-│   │   ├── collision.py        # Collision-based cost
-│   │   ├── ttc.py              # Time-to-Collision cost
-│   │   └── kinematic.py        # Kinematic stability cost
-│   │
-│   └── scripts/                 # Runnable scripts
-│       ├── demo_vis/           # Visualization demos
-│       │   ├── qa_replay_demo.py
-│       │   ├── trajectory_action_demo.py
-│       │   └── scenario_info_demo.py
-│       └── data_collect/       # Data collection
-│           ├── collect_offline_data.py
-│           ├── collect_qa_data.py
-│           └── read_offline_data.py
+│   └── scripts/                    # Runnable scripts
+│       ├── demo_vis/              # Visualization demos
+│       │   ├── replay_demo.py     # GIF/console replay with BEV + cameras + QA
+│       │   └── scenario_demo.py   # Trajectory + surrounding vehicle visualization
+│       └── data_collect/          # Data collection
+│           ├── collect_data.py    # Unified data collection (all modes)
+│           └── read_data.py       # Dataset inspection & visualization
 │
-├── dataset/                     # Input data
-└── outputs/                     # Output directory
-    ├── offline_data/           # Collected datasets (.h5, .npz)
-    └── vis/                    # Visualizations (.gif, .png)
+├── dataset/                        # Input data
+└── outputs/                        # Output directory
+    ├── offline_data/              # Collected datasets (.h5)
+    └── vis/                       # Visualizations (.gif, .png)
 ```
 
 ---
 
 ## Scripts Usage
 
-### 1. QA Replay Demo (Main Demo ⭐)
+### 1. Replay Demo (Main Demo ⭐)
 
-Generate animated GIFs with synchronized QA annotations and camera images.
+Generate animated GIFs with synchronized MetaDrive BEV, 6-camera grid, and QA annotations.
 
 ```bash
 # List available scenes with QA data
-python -m meta_qa.scripts.demo_vis.qa_replay_demo --list-scenes
+python -m meta_qa.scripts.demo_vis.replay_demo --list-scenes
 
-# Generate GIF with 6-camera layout
-python -m meta_qa.scripts.demo_vis.qa_replay_demo \
-    --scene scene-0916 \
-    --output outputs/vis/demo.gif
+# Generate GIF for a scene
+python -m meta_qa.scripts.demo_vis.replay_demo --scene scene-0061 --output outputs/vis/demo.gif
 
-# Custom FPS and frame limit
-python -m meta_qa.scripts.demo_vis.qa_replay_demo \
-    --scene scene-0916 \
-    --output outputs/vis/demo.gif \
-    --fps 1 --max-frames 20
+# Console demo (text output)
+python -m meta_qa.scripts.demo_vis.replay_demo --scene scene-0061 --mode console
+
+# Samples only (keyframes at 2Hz)
+python -m meta_qa.scripts.demo_vis.replay_demo --scene scene-0061 --samples-only \
+    --fps 2 --output outputs/vis/demo.gif
+
+# Custom FPS, resolution, and frame limit
+python -m meta_qa.scripts.demo_vis.replay_demo \
+    --scene scene-0061 --width 1600 --height 1000 --fps 5 --max-frames 50
 ```
 
 **Arguments:**
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--scene` | None | Scene name (e.g., scene-0916) |
-| `--qa-dir` | dataset/QA_Data | Path to QA data |
-| `--nuscenes-dir` | dataset/Scenario_Data/exp_nuscenes/v1.0-mini | NuScenes path |
-| `--scenario-dir` | dataset/Scenario_Data/exp_nuscenes_converted | Converted scenarios |
-| `--list-scenes` | - | List available scenes and exit |
-| `--output` | outputs/vis/{scene_name}.gif | Output GIF path |
+| `--mode` | gif | Mode: `gif` / `console` / `list` |
+| `--scene` | None | Scene name (e.g., `scene-0061`) |
+| `--list-scenes` | — | List available scenes and exit |
+| `--output` | auto | Output GIF path |
 | `--width` | 1200 | GIF width in pixels |
-| `--height` | 1200 | GIF height in pixels |
-| `--max-frames` | None | Max frames (None = all) |
-| `--fps` | 2 | Target frame rate |
+| `--height` | 900 | GIF height in pixels |
+| `--fps` | 12 | Frame rate |
+| `--samples-only` | False | Show only 2Hz keyframes |
+| `--max-frames` | None | Max frames to process |
 
 ---
 
-### 2. Trajectory Action Demo
+### 2. Scenario Demo
 
-Visualize trajectory-based actions with future waypoints and control signals.
+Visualize ego trajectory with surrounding vehicles, control signals, and statistics.
 
 ```bash
-# Default top-down view
-python -m meta_qa.scripts.demo_vis.trajectory_action_demo
+# Top-down view (default)
+python -m meta_qa.scripts.demo_vis.scenario_demo
 
-# 3D view mode
-python -m meta_qa.scripts.demo_vis.trajectory_action_demo --mode 3d
+# 3D view
+python -m meta_qa.scripts.demo_vis.scenario_demo --mode 3d
 
-# Custom trajectory horizon (seconds)
-python -m meta_qa.scripts.demo_vis.trajectory_action_demo --horizon 3.0
-
-# Custom data directory
-python -m meta_qa.scripts.demo_vis.trajectory_action_demo \
-    --data_dir /path/to/scenario_data
+# Custom trajectory horizon and detection radius
+python -m meta_qa.scripts.demo_vis.scenario_demo --horizon 3.0 --detection-radius 40
 ```
 
 **Arguments:**
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--data_dir` | dataset/Scenario_Data/exp_nuscenes_converted | Scenario data path |
-| `--mode` | topdown | View mode: topdown/3d |
+| `--mode` | topdown | View mode: `topdown` / `3d` / `stats` |
 | `--horizon` | 2.0 | Trajectory horizon in seconds |
+| `--detection-radius` | 50.0 | Surrounding vehicle detection radius (m) |
+| `--max-vehicles` | 10 | Max surrounding vehicles to track |
+| `--save-gif` | True | Save visualization as GIF |
+| `--plot-stats` | True | Plot statistics after completion |
+| `--scenario-index` | random | Specific scenario index |
 
 ---
 
-### 3. Scenario Info Demo
+### 3. Collect Data (Unified)
 
-Visualize surrounding vehicle information (positions, velocities, distances).
-
-```bash
-# Basic visualization
-python -m meta_qa.scripts.demo_vis.scenario_info_demo
-
-# Multiple scenarios with custom detection radius
-python -m meta_qa.scripts.demo_vis.scenario_info_demo \
-    --num_scenarios 3 \
-    --detection_radius 10
-```
-
-**Arguments:**
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--data_dir` | dataset/Scenario_Data/exp_nuscenes_converted | Scenario data path |
-| `--num_scenarios` | 1 | Number of scenarios to visualize |
-| `--detection_radius` | 50.0 | Detection radius in meters |
-| `--max_vehicles` | 10 | Max surrounding vehicles to track |
-| `--save_gif` | True | Save visualization as GIF |
-| `--plot_stats` | True | Plot surrounding vehicle statistics |
-
----
-
-### 4. Collect Offline Data
-
-Collect expert trajectory data for offline reinforcement learning.
+Unified data collection script supporting multiple modes.
 
 ```bash
-# Collect MDP data (reward only)
-python -m meta_qa.scripts.data_collect.collect_offline_data \
-    --data_dir dataset/Scenario_Data/exp_nuscenes_converted \
-    --num_scenarios 10 \
-    --output outputs/offline_data/expert_mdp.h5
+# Original frequency (~12Hz) without QA
+python -m meta_qa.scripts.data_collect.collect_data --mode original
 
-# Collect CMDP data with TTC cost
-python -m meta_qa.scripts.data_collect.collect_offline_data \
-    --data_dir dataset/Scenario_Data/exp_nuscenes_converted \
-    --num_scenarios 10 \
-    --cost_type ttc \
-    --output outputs/offline_data/expert_cmdp_ttc.h5
+# Original frequency with QA annotations
+python -m meta_qa.scripts.data_collect.collect_data --mode original_qa
+
+# Keyframe only (2Hz)
+python -m meta_qa.scripts.data_collect.collect_data --mode keyframe
+
+# Keyframe with QA
+python -m meta_qa.scripts.data_collect.collect_data --mode keyframe_qa
+
+# Trajectory-based observation/action
+python -m meta_qa.scripts.data_collect.collect_data \
+    --mode trajectory --history_sec 0.5 --future_sec 2.0
+
+# CMDP with TTC cost
+python -m meta_qa.scripts.data_collect.collect_data --mode original --cost_type ttc
+
+# Specific scenes
+python -m meta_qa.scripts.data_collect.collect_data \
+    --mode original_qa --scenes scene-0061 scene-0103
 ```
 
-**Arguments:**
+**Collection Modes:**
+| Mode | Frequency | QA | Description |
+|------|-----------|-----|-------------|
+| `original` | ~12Hz | ✗ | All frames at original sensor rate |
+| `original_qa` | ~12Hz | ✓ | All frames + QA at keyframes |
+| `keyframe` | 2Hz | ✗ | Keyframes only |
+| `keyframe_qa` | 2Hz | ✓ | Keyframes + QA |
+| `trajectory` | ~12Hz | ✗ | Trajectory-based obs/action (history + future) |
+
+**Key Arguments:**
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--data_dir` | (required) | Path to ScenarioNet dataset |
-| `--num_scenarios` | 100 | Number of scenarios to collect |
-| `--cost_type` | none | Cost type: none/collision/distance/ttc |
-| `--output` | auto-generated | Output file path |
-| `--format` | hdf5 | Output format: hdf5/npz |
+| `--mode` | original | Collection mode (see above) |
+| `--cost_type` | none | Cost type: `none` / `collision` / `ttc` |
+| `--output` | auto | Output HDF5 file path |
+| `--scenes` | all | Specific scene names |
+| `--history_sec` | 0.5 | Trajectory history window (trajectory mode) |
+| `--future_sec` | 2.0 | Trajectory future window (trajectory mode) |
 
 **Output Format (HDF5):**
-- `observations`: (N, obs_dim) - State observations
-- `actions`: (N, 40) - Trajectory actions (20 waypoints × 2)
-- `rewards`: (N,) - Step rewards
-- `next_observations`: (N, obs_dim) - Next states
-- `terminals`: (N,) - Episode termination flags
-- `costs`: (N,) - Safety costs (CMDP only)
-- `episode_starts`: Starting indices per episode
+- `observations`: (N, obs_dim) — State observations
+- `actions`: (N, 40) — Trajectory actions (20 waypoints × 2)
+- `rewards`: (N,) — Step rewards
+- `terminals`: (N,) — Episode termination flags
+- `costs`: (N,) — Safety costs (CMDP only)
+- `qa_data`: QA annotations (QA modes only)
+- `metadata`: Collection parameters
 
 ---
 
-### 5. Collect QA-Enhanced Data
-
-Collect trajectory data with QA annotations for multi-modal learning.
-
-```bash
-python -m meta_qa.scripts.data_collect.collect_qa_data \
-    --scenario-dir dataset/Scenario_Data/exp_nuscenes_converted \
-    --qa-dir dataset/QA_Data \
-    --nuscenes-dir dataset/Scenario_Data/exp_nuscenes/v1.0-mini \
-    --output outputs/offline_data/qa_enhanced.h5
-
-# Specific scenes only
-python -m meta_qa.scripts.data_collect.collect_qa_data \
-    --scenes scene-0553 \
-    --output outputs/offline_data/qa_subset.h5
-
-# Include camera image paths (optional, increases dataset size)
-python -m meta_qa.scripts.data_collect.collect_qa_data \
-    --scenario-dir dataset/Scenario_Data/exp_nuscenes_converted \
-    --qa-dir dataset/QA_Data \
-    --nuscenes-dir dataset/Scenario_Data/exp_nuscenes/v1.0-mini \
-    --output outputs/offline_data/qa_with_images.h5 \
-    --include-image-paths
-
-# Custom number of trajectory waypoints (default: 20)
-python -m meta_qa.scripts.data_collect.collect_qa_data \
-    --scenario-dir dataset/Scenario_Data/exp_nuscenes_converted \
-    --qa-dir dataset/QA_Data \
-    --nuscenes-dir dataset/Scenario_Data/exp_nuscenes/v1.0-mini \
-    --output outputs/offline_data/qa_10waypoints.h5 \
-    --num-waypoints 10
-```
-
-**Arguments:**
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--scenario-dir` | dataset/Scenario_Data/exp_nuscenes_converted | Converted scenarios |
-| `--qa-dir` | dataset/QA_Data | QA annotations path |
-| `--nuscenes-dir` | dataset/Scenario_Data/exp_nuscenes/v1.0-mini | Original NuScenes |
-| `--output` | outputs/offline_data/qa_enhanced_dataset.h5 | Output file |
-| `--format` | hdf5 | Output format: hdf5/json |
-| `--scenes` | None | Specific scenes (default: all) |
-| `--include-image-paths` | False | Include 6-camera image paths |
-| `--num-waypoints` | 20 | Number of future waypoints |
-
----
-
-### 6. Read Offline Data
+### 4. Read/Inspect Data
 
 Inspect collected datasets.
 
 ```bash
-# List available datasets
-python -m meta_qa.scripts.data_collect.read_offline_data --list
+# Show dataset info
+python -m meta_qa.scripts.data_collect.read_data \
+    --file outputs/offline_data/original_qa.h5
 
-# Inspect a specific dataset
-python -m meta_qa.scripts.data_collect.read_offline_data \
-    --file outputs/offline_data/expert_mdp.h5
+# List available datasets
+python -m meta_qa.scripts.data_collect.read_data --list
+
+# Show QA data
+python -m meta_qa.scripts.data_collect.read_data \
+    --file outputs/offline_data/original_qa.h5 --show_qa --max_qa 5
+
+# Visualize episode trajectory
+python -m meta_qa.scripts.data_collect.read_data \
+    --file outputs/offline_data/original_qa.h5 --visualize --episode 5
 
 # Show more sample data points
-python -m meta_qa.scripts.data_collect.read_offline_data \
-    --file outputs/offline_data/expert_mdp.h5 \
-    --samples 10
+python -m meta_qa.scripts.data_collect.read_data \
+    --file outputs/offline_data/original_qa.h5 --samples 10
 ```
-
-**Arguments:**
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--file` | None | Dataset file to inspect |
-| `--list` | False | List available datasets |
-| `--samples` | 3 | Number of sample points to show |
 
 ---
 
@@ -343,19 +326,63 @@ obs, reward, done, truncated, info = env.step(action)
 env.close()
 ```
 
+### Original Frequency Replay
+
+```python
+from meta_qa.tools import ReplayOriginalEnv, NuScenesQALoader
+
+# Load QA data (optional)
+qa_loader = NuScenesQALoader(
+    qa_data_dir="dataset/QA_Data",
+    nuscenes_dataroot="dataset/Scenario_Data/exp_nuscenes/v1.0-mini"
+).load()
+
+# Create original frequency replay environment
+env = ReplayOriginalEnv(
+    nuscenes_dataroot="dataset/Scenario_Data/exp_nuscenes/v1.0-mini",
+    scenario_dir="dataset/Scenario_Data/exp_nuscenes_converted",
+    qa_loader=qa_loader,
+).load()
+
+# Load a scene
+env.load_scene("scene-0061")
+print(f"Total frames: {env.num_frames} (original frequency ~12Hz)")
+print(f"Samples (keyframes): {env.num_samples} (2Hz)")
+
+# Iterate through all frames at original frequency
+for frame_info in env.iterate_frames():
+    print(f"Frame {frame_info.frame_idx}: sample={frame_info.is_sample}")
+    
+    # Interpolated trajectory state at this frame's timestamp
+    if frame_info.ego_state:
+        print(f"  Position: {frame_info.ego_state.position}")
+        print(f"  Velocity: {frame_info.ego_state.velocity}")
+    
+    # QA only available at samples (2Hz keyframes)
+    if frame_info.is_sample and frame_info.has_qa:
+        for qa in frame_info.qa_items:
+            print(f"  Q: {qa['question']}")
+            print(f"  A: {qa['answer']}")
+    
+    # Camera images (all 6 cameras)
+    for cam, path in frame_info.image_paths.items():
+        print(f"  {cam}: {path}")
+```
+
+
+---
+
 ## Acknowledgments
 
 This project builds upon the excellent work of:
 
-MetaDrive(https://github.com/metadriverse/metadrive)
-
-ScenarioNet(https://github.com/metadriverse/scenarionet)
-
-NuScenes-QA(https://github.com/qiantianwen/NuScenes-QA) 
-
+- [MetaDrive](https://github.com/metadriverse/metadrive)
+- [ScenarioNet](https://github.com/metadriverse/scenarionet)
+- [NuScenes-QA](https://github.com/qiantianwen/NuScenes-QA)
+- [ASAP](https://github.com/JeffWang987/ASAP)
 
 ---
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

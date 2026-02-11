@@ -1,28 +1,39 @@
 """
 MetaQA Tools Module.
 
-Utility tools for visualization, data loading, and extraction.
-- QA data loading (NuScenes-QA)
-- QA visualization (PIL and Pygame)
-- GIF generation for scenario replay
-- Trajectory visualization
-- Surrounding vehicle extraction
+Utility tools for data processing, visualization, and extraction.
+
+Components:
+    - structures: MDP/CMDP transition data classes
+    - qa_loader: NuScenes-QA data loader & scene matcher
+    - nuscenes_original: Original frequency (~12Hz) frame extraction
+    - interpolation: Trajectory interpolation (10Hz → ~12Hz)
+    - replay_original: Original frequency replay environment
+    - trajectory_vis: Trajectory visualization (OpenCV/Matplotlib)
+    - surrounding: Surrounding vehicle extraction from MetaDrive
 """
 
-from .gif_generator import GIFGenerator, GIFConfig
-from .qa_vis import (
-    QARenderer,
-    QADisplayItem,
-    QAInfoPanel,
-    ImagePanel,
-    IntegratedQAVisualizer,
-    render_qa_panel,
-    render_camera_grid,
-    CAMERA_LAYOUT,
-    CAMERA_LABELS,
+from .structures import (
+    MDPTransition,
+    CMDPTransition,
 )
-from .trajectory_vis import TrajectoryVisualizer
-from .surrounding import SurroundingVehicleGetter
+from .nuscenes_original import (
+    FrameData,
+    SceneOriginalData,
+    NuScenesOriginalProcessor,
+)
+from .interpolation import (
+    InterpolatedState,
+    TrajectoryInterpolator,
+    ScenarioTrajectoryMatcher,
+    interpolate_angle,
+    linear_interpolate,
+    compute_interpolation_info,
+)
+from .replay_original import (
+    FrameOriginalInfo,
+    ReplayOriginalEnv,
+)
 from .qa_loader import (
     QAItem,
     SampleQAData,
@@ -30,27 +41,34 @@ from .qa_loader import (
     NuScenesQALoader,
     ScenarioQAMatcher,
 )
+from .trajectory_vis import TrajectoryVisualizer
+from .surrounding import SurroundingVehicleGetter, SurroundingVehicleInfo
 
 __all__ = [
+    # Structures
+    'MDPTransition',
+    'CMDPTransition',
+    'SurroundingVehicleInfo',
+    # Original frequency NuScenes
+    'FrameData',
+    'SceneOriginalData',
+    'NuScenesOriginalProcessor',
+    # Interpolation
+    'InterpolatedState',
+    'TrajectoryInterpolator',
+    'ScenarioTrajectoryMatcher',
+    'interpolate_angle',
+    'linear_interpolate',
+    'compute_interpolation_info',
+    # Original frequency Replay
+    'FrameOriginalInfo',
+    'ReplayOriginalEnv',
     # QA Data Loading
     'QAItem',
-    'SampleQAData', 
+    'SampleQAData',
     'SceneQAData',
     'NuScenesQALoader',
     'ScenarioQAMatcher',
-    # QA Visualization
-    'QARenderer',
-    'QADisplayItem',
-    'QAInfoPanel',
-    'ImagePanel',
-    'IntegratedQAVisualizer',
-    'render_qa_panel',
-    'render_camera_grid',
-    'CAMERA_LAYOUT',
-    'CAMERA_LABELS',
-    # GIF Generation
-    'GIFGenerator',
-    'GIFConfig',
     # Trajectory Visualization
     'TrajectoryVisualizer',
     # Surrounding Vehicle
