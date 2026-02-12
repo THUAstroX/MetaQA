@@ -1,33 +1,41 @@
 """
 Data Collection Scripts.
 
-Unified data collection for offline RL datasets.
+Trajectory-based offline RL data collection.
 
-Supported modes:
-    - original:     Original sensor frequency (~12Hz) without QA
-    - original_qa:  Original frequency with QA at keyframes  
-    - keyframe:     Keyframe data only (2Hz)
-    - keyframe_qa:  Keyframe data with QA annotations
-    - trajectory:   Trajectory-based observation/action
+All observations use historical trajectory, and all actions are future waypoint trajectories.
+
+Parameters:
+    --frequency    Data frequency: original (~12Hz) or keyframe (2Hz)
+    --qa           Include QA annotations (default: true, use --qa false to disable)
+    --map          Include map features (default: true, use --map false to disable)
+    --history_sec  Historical observation window (default: 0.5s)
+    --future_sec   Future trajectory horizon (default: 2.0s)
 
 Usage:
-    python -m meta_qa.scripts.data_collect.collect_data --mode original
-    python -m meta_qa.scripts.data_collect.collect_data --mode keyframe_qa --cost_type ttc
-    python -m meta_qa.scripts.data_collect.collect_data --mode trajectory --history_sec 0.5 --future_sec 2.0
+    # Default: collect with QA + map
+    python -m meta_qa.scripts.data_collect.collect_data
+    
+    # Disable QA or map
+    python -m meta_qa.scripts.data_collect.collect_data --qa false
+    python -m meta_qa.scripts.data_collect.collect_data --map false
+    python -m meta_qa.scripts.data_collect.collect_data --qa false --map false
 """
 
 from .collect_data import (
-    CollectionMode,
-    ObservationType,
+    FrequencyMode,
     CostType,
     CollectionConfig,
-    UnifiedDataCollector,
+    TrajectoryDataCollector,
+    MAP_TYPE_CODES,
+    MAP_TYPE_NAMES,
 )
 
 __all__ = [
-    "CollectionMode",
-    "ObservationType",
+    "FrequencyMode",
     "CostType",
     "CollectionConfig",
-    "UnifiedDataCollector",
+    "TrajectoryDataCollector",
+    "MAP_TYPE_CODES",
+    "MAP_TYPE_NAMES",
 ]

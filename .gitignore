@@ -51,6 +51,7 @@ outputs/offline_data/**/*
 outputs/vis/**/*
 !outputs/vis/.gitkeep
 !outputs/vis/demo.gif
+!outputs/vis/data_vis.png
 
 # OS files
 .DS_Store

@@ -126,7 +126,7 @@ MetaQA/
 
 ## Scripts Usage
 
-### 1. Replay Demo (Main Demo ⭐)
+### 1. Replay Demo
 
 Generate animated GIFs with synchronized MetaDrive BEV, 6-camera grid, and QA annotations.
 
@@ -192,183 +192,171 @@ python -m meta_qa.scripts.demo_vis.scenario_demo --horizon 3.0 --detection-radiu
 
 ---
 
-### 3. Collect Data (Unified)
+### 3. Collect Data
 
-Unified data collection script supporting multiple modes.
+Trajectory-based offline RL data collection. All observations use historical trajectory, and all actions are future waypoint trajectories.
 
 ```bash
-# Original frequency (~12Hz) without QA
-python -m meta_qa.scripts.data_collect.collect_data --mode original
+# Original frequency (~12Hz) - includes QA + map by default
+python -m meta_qa.scripts.data_collect.collect_data
 
-# Original frequency with QA annotations
-python -m meta_qa.scripts.data_collect.collect_data --mode original_qa
+# Disable QA annotations
+python -m meta_qa.scripts.data_collect.collect_data --qa false
 
-# Keyframe only (2Hz)
-python -m meta_qa.scripts.data_collect.collect_data --mode keyframe
+# Disable map features
+python -m meta_qa.scripts.data_collect.collect_data --map false
 
-# Keyframe with QA
-python -m meta_qa.scripts.data_collect.collect_data --mode keyframe_qa
+# Keyframe only (2Hz) - still includes QA + map
+python -m meta_qa.scripts.data_collect.collect_data --frequency keyframe
 
-# Trajectory-based observation/action
+# Custom trajectory windows
 python -m meta_qa.scripts.data_collect.collect_data \
-    --mode trajectory --history_sec 0.5 --future_sec 2.0
+    --history_sec 1.0 --future_sec 3.0
 
 # CMDP with TTC cost
-python -m meta_qa.scripts.data_collect.collect_data --mode original --cost_type ttc
+python -m meta_qa.scripts.data_collect.collect_data --cost_type ttc
 
-# Specific scenes
+# Specific scenes with all features
 python -m meta_qa.scripts.data_collect.collect_data \
-    --mode original_qa --scenes scene-0061 scene-0103
+    --scenes scene-0061 scene-0103
 ```
 
-**Collection Modes:**
-| Mode | Frequency | QA | Description |
-|------|-----------|-----|-------------|
-| `original` | ~12Hz | ✗ | All frames at original sensor rate |
-| `original_qa` | ~12Hz | ✓ | All frames + QA at keyframes |
-| `keyframe` | 2Hz | ✗ | Keyframes only |
-| `keyframe_qa` | 2Hz | ✓ | Keyframes + QA |
-| `trajectory` | ~12Hz | ✗ | Trajectory-based obs/action (history + future) |
-
-**Key Arguments:**
+**Parameters:**
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--mode` | original | Collection mode (see above) |
+| `--frequency` | original | Data frequency: `original` (~12Hz) / `keyframe` (2Hz) |
+| `--qa` | true | Include QA annotations (use `--qa false` to disable) |
+| `--map` | true | Include map features (use `--map false` to disable) |
+| `--map_radius` | 50.0 | Radius (m) around ego trajectory to collect map features |
+| `--history_sec` | 0.5 | Historical observation window in seconds |
+| `--future_sec` | 2.0 | Future trajectory horizon in seconds |
 | `--cost_type` | none | Cost type: `none` / `collision` / `ttc` |
 | `--output` | auto | Output HDF5 file path |
 | `--scenes` | all | Specific scene names |
-| `--history_sec` | 0.5 | Trajectory history window (trajectory mode) |
-| `--future_sec` | 2.0 | Trajectory future window (trajectory mode) |
+
+**Observation Format:**
+- Ego trajectory: `history_steps × (x, y, vx, vy, heading)` in local frame
+- Surrounding vehicles: `history_steps × max_vehicles × (rel_x, rel_y, rel_vx, rel_vy, heading)`
+
+**Action Format:**
+- Future waypoints: `future_steps × (rel_x, rel_y, rel_vx, rel_vy, heading)` in local frame
 
 **Output Format (HDF5):**
-- `observations`: (N, obs_dim) — State observations
-- `actions`: (N, 40) — Trajectory actions (20 waypoints × 2)
-- `rewards`: (N,) — Step rewards
+- `observations`: (N, obs_dim) — Trajectory-based observations
+- `actions`: (N, action_dim) — Future waypoint actions
+- `rewards`: (N,) — MetaDrive ScenarioEnv rewards (driving progress, penalties, terminal bonuses)
 - `terminals`: (N,) — Episode termination flags
-- `costs`: (N,) — Safety costs (CMDP only)
-- `qa_data`: QA annotations (QA modes only)
-- `metadata`: Collection parameters
+- `costs`: (N,) — Safety costs (CMDP only, when `--cost_type` is set)
+- `qa_data`: QA annotations (when `--qa` is set)
+- `map_data`: Per-episode map features (when `--map` is set)
+- `frame_metadata`: Per-step metadata:
+  - `timestamps`, `is_sample`, `sample_indices`, `interpolation_ratios`
+  - `ego_world_x`, `ego_world_y`, `ego_world_heading` — global pose
+  - `scene_names` — scene name per step
+  - `image_CAM_*` — 6 camera image relative paths per step
+- `metadata` (attrs): Collection parameters (frequency, history/future steps, dimensions, etc.)
+
 
 ---
 
 ### 4. Read/Inspect Data
 
-Inspect collected datasets.
+Inspect and visualize collected offline RL datasets.
 
 ```bash
-# Show dataset info
+# Show dataset info and statistics
 python -m meta_qa.scripts.data_collect.read_data \
-    --file outputs/offline_data/original_qa.h5
+    --file outputs/offline_data/original_qa_map.h5
 
-# List available datasets
+# List available datasets in output directory
 python -m meta_qa.scripts.data_collect.read_data --list
 
-# Show QA data
+# Show sample data points (observations, actions, rewards, costs)
 python -m meta_qa.scripts.data_collect.read_data \
-    --file outputs/offline_data/original_qa.h5 --show_qa --max_qa 5
+    --file outputs/offline_data/original_qa_map.h5 --samples 5
 
-# Visualize episode trajectory
+# Show QA annotations
 python -m meta_qa.scripts.data_collect.read_data \
-    --file outputs/offline_data/original_qa.h5 --visualize --episode 5
+    --file outputs/offline_data/original_qa_map.h5 --show_qa --max_qa 10
 
-# Show more sample data points
+# Visualize episode trajectory (ego-centric view)
 python -m meta_qa.scripts.data_collect.read_data \
-    --file outputs/offline_data/original_qa.h5 --samples 10
+    --file outputs/offline_data/original_qa_map.h5 --visualize --episode 5
+
+# Save visualization to file
+python -m meta_qa.scripts.data_collect.read_data \
+    --file outputs/offline_data/original_qa_map.h5 --visualize --episode 5 \
+    --save_fig outputs/vis/episode_5.png
+
+# Visualize data distributions
+python -m meta_qa.scripts.data_collect.read_data \
+    --file outputs/offline_data/original_qa_map.h5 --visualize_dist \
+    --save_fig outputs/vis/distribution.png
+
+# Skip info printing (useful when only visualizing)
+python -m meta_qa.scripts.data_collect.read_data \
+    --file outputs/offline_data/original_qa_map.h5 --visualize --no_info
 ```
+
+**Visualization Features:**
+
+**Episode Trajectory View** (`--visualize`):
+- **Row 1-2: Core Metrics** (4 charts in 2×2 layout)
+  - **Ego-Centric Snapshot**: Single timestep view centered on ego vehicle
+    - Map features (when collected with `--map`): lanes, road lines, crosswalks, road edges
+    - Blue dashed: historical trajectory (ego history)
+    - Green solid: future waypoints (planned trajectory)
+    - Yellow circle: current ego position with heading arrow
+    - Red squares: surrounding vehicles with history trails
+    - Dark background with map context for better visualization
+    - Axis limits automatically adjusted to focus on ego trajectory
+  - **Velocity Profile**: speed, vx, vy over time
+  - **Rewards & Costs**: dual-axis plot with cost event markers
+  - **Vehicle Dynamics**: acceleration (m/s²) and yaw rate (deg/s) over time
+- **Row 3: Surround Camera Images** (2×3 grid, when available)
+  - 6-camera view: FRONT_LEFT, FRONT, FRONT_RIGHT (top row)
+  - BACK_LEFT, BACK, BACK_RIGHT (bottom row)
+  - Images synchronized to the snapshot timestep
+- **Row 4: QA Annotations** (when available)
+  - Question-answer pairs from the nearest keyframe
+  - Displays up to 8 QA items with template types
+
+**Data Distribution View** (`--visualize_dist`):
+- **Ego Speed Distribution**: histogram of ego speeds across dataset
+- **Future Waypoints Scatter**: 2D scatter of planned trajectories (500 samples)
+- **Ego History Positions**: xy scatter colored by time step
+- **Heading Change Distribution**: future heading angle changes
+
+**Arguments:**
+| Argument | Description |
+|----------|-------------|
+| `--file` / `-f` | Path to HDF5 dataset file |
+| `--list` / `-l` | List all available datasets |
+| `--samples` / `-s` | Number of sample data points to print (default: 3) |
+| `--start` | Starting index for sample printing (default: 0) |
+| `--show_qa` | Display QA annotations |
+| `--max_qa` | Maximum QA items to show (default: 20) |
+| `--visualize` / `-v` | Visualize episode trajectory |
+| `--visualize_dist` | Visualize observation/action distributions |
+| `--episode` / `-e` | Episode index to visualize (default: 0) |
+| `--save_fig` | Save visualization to file (PNG/PDF) |
+| `--no_info` | Skip dataset info printing |
+
 
 ---
 
-## Python API
+## Data Visualization
 
-### Load QA Data
+The dataset visualization provides comprehensive insights into collected offline RL data:
 
-```python
-from meta_qa.tools import NuScenesQALoader, ScenarioQAMatcher
+<p align="center">
+  <img src="outputs/vis/data_vis.png" alt="Dataset Visualization - Episode trajectory with cameras and QA annotations" width="100%">
+</p>
 
-# Load QA annotations
-loader = NuScenesQALoader(
-    qa_data_dir="dataset/QA_Data",
-    nuscenes_dataroot="dataset/Scenario_Data/exp_nuscenes/v1.0-mini"
-).load()
-
-# Match to scenario
-matcher = ScenarioQAMatcher(loader, "dataset/Scenario_Data/exp_nuscenes_converted")
-scene_qa = matcher.get_scene_qa("scene-0916")
-
-# Iterate QA items
-for sample_token, sample in scene_qa.samples.items():
-    print(f"Sample: {sample_token}")
-    for qa in sample.qa_items:
-        print(f"  Q: {qa.question}")
-        print(f"  A: {qa.answer}")
-        print(f"  Type: {qa.template_type}")
-```
-
-### Trajectory RL Environment
-
-```python
-from meta_qa.core import TrajectoryEnv
-from metadrive.envs.scenario_env import ScenarioEnv
-
-# Create environment with trajectory-based actions
-base_env = ScenarioEnv(config={
-    "data_directory": "dataset/Scenario_Data/exp_nuscenes_converted",
-    "use_render": True
-})
-env = TrajectoryEnv(base_env)
-
-obs, info = env.reset()
-
-# Action: 20 waypoints × 2 (x, y) = 40 dimensions
-action = env.action_space.sample()
-obs, reward, done, truncated, info = env.step(action)
-
-env.close()
-```
-
-### Original Frequency Replay
-
-```python
-from meta_qa.tools import ReplayOriginalEnv, NuScenesQALoader
-
-# Load QA data (optional)
-qa_loader = NuScenesQALoader(
-    qa_data_dir="dataset/QA_Data",
-    nuscenes_dataroot="dataset/Scenario_Data/exp_nuscenes/v1.0-mini"
-).load()
-
-# Create original frequency replay environment
-env = ReplayOriginalEnv(
-    nuscenes_dataroot="dataset/Scenario_Data/exp_nuscenes/v1.0-mini",
-    scenario_dir="dataset/Scenario_Data/exp_nuscenes_converted",
-    qa_loader=qa_loader,
-).load()
-
-# Load a scene
-env.load_scene("scene-0061")
-print(f"Total frames: {env.num_frames} (original frequency ~12Hz)")
-print(f"Samples (keyframes): {env.num_samples} (2Hz)")
-
-# Iterate through all frames at original frequency
-for frame_info in env.iterate_frames():
-    print(f"Frame {frame_info.frame_idx}: sample={frame_info.is_sample}")
-    
-    # Interpolated trajectory state at this frame's timestamp
-    if frame_info.ego_state:
-        print(f"  Position: {frame_info.ego_state.position}")
-        print(f"  Velocity: {frame_info.ego_state.velocity}")
-    
-    # QA only available at samples (2Hz keyframes)
-    if frame_info.is_sample and frame_info.has_qa:
-        for qa in frame_info.qa_items:
-            print(f"  Q: {qa['question']}")
-            print(f"  A: {qa['answer']}")
-    
-    # Camera images (all 6 cameras)
-    for cam, path in frame_info.image_paths.items():
-        print(f"  {cam}: {path}")
-```
-
+*Multi-row visualization showing:*
+- *Row 1-2: Ego-centric trajectory, velocity profile, rewards/costs, vehicle dynamics*
+- *Row 3: Synchronized 6-camera surround view*
+- *Row 4: QA annotations from nearest keyframe*
 
 ---
 
